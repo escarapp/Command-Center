@@ -90,14 +90,10 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
   const supabase = useMemo(() => createClient(), []);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [userRole, setUserRole] = useState<string>("employee");
-  const [canManageEmployees, setCanManageEmployees] = useState(false);
   const [fallbackActiveProjectName, setFallbackActiveProjectName] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const displayActiveProjectName = activeProjectName ?? fallbackActiveProjectName ?? "No active project";
-  const moreItems = useMemo(
-    () => NAV_MORE_ITEMS.filter((item) => (item.href === "/employees" ? canManageEmployees : true)),
-    [canManageEmployees],
-  );
+  const moreItems = NAV_MORE_ITEMS;
   const planningActive = PLANNING_ITEMS.some((item) => item.href === pathname);
   const dashboardsActive = DASHBOARD_ITEMS.some((item) => item.href === pathname);
   const engineeringActive = ENGINEERING_ITEMS.some((item) => item.href === pathname);
@@ -120,27 +116,12 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
 
       if (!isMounted || !user) return;
 
-      const [profileResult, companyManagerResult, projectManagerResult] = await Promise.all([
-        supabase.from("user_profiles").select("role").eq("id", user.id).maybeSingle(),
-        supabase
-          .from("company_members")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", user.id)
-          .in("member_role", ["company_admin", "manager"]),
-        supabase
-          .from("project_members")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", user.id)
-          .in("access_role", ["company_admin", "manager"]),
-      ]);
+      const profileResult = await supabase.from("user_profiles").select("role").eq("id", user.id).maybeSingle();
 
       const role = profileResult.data?.role ?? "employee";
-      const hasManagerScope = (companyManagerResult.count ?? 0) > 0 || (projectManagerResult.count ?? 0) > 0;
-      const hasPlatformScope = role === "platform_manager" || role === "admin";
 
       if (!isMounted) return;
       setUserRole(role);
-      setCanManageEmployees(hasPlatformScope || hasManagerScope);
     }
 
     void loadPermissions();
