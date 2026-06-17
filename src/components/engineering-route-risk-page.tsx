@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { readActiveProjectSelection } from "@/lib/project-session";
 import { fetchRouteRiskScores, refreshRouteCrossings } from "@/lib/engineering-api";
 import type { EngineeringRouteRiskRow } from "@/types/phase6";
 
@@ -18,15 +19,27 @@ export function EngineeringRouteRiskPage() {
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [routes, setRoutes] = useState<RouteOption[]>([]);
   const [projectId, setProjectId] = useState("");
+  const [activeProjectName, setActiveProjectName] = useState("");
   const [rows, setRows] = useState<EngineeringRouteRiskRow[]>([]);
   const [status, setStatus] = useState("");
   const [isBusy, setIsBusy] = useState(false);
 
+  useEffect(() => {
+    const selected = readActiveProjectSelection();
+    if (selected?.id) {
+      setProjectId(selected.id);
+      setActiveProjectName(selected.name);
+    }
+  }, []);
+
   async function reload() {
     try {
+      const routesQuery = supabase.from("route_alternatives").select("id,name,project_id").order("updated_at", { ascending: false }).limit(1000);
+      const scopedRoutesQuery = projectId ? routesQuery.eq("project_id", projectId) : routesQuery;
+
       const [projectsRes, routesRes, riskRows] = await Promise.all([
         supabase.from("projects").select("id,name").order("updated_at", { ascending: false }).limit(500),
-        supabase.from("route_alternatives").select("id,name,project_id").order("updated_at", { ascending: false }).limit(1000),
+        scopedRoutesQuery,
         fetchRouteRiskScores(supabase, projectId || undefined),
       ]);
       if (projectsRes.error) throw new Error(projectsRes.error.message);
@@ -66,6 +79,7 @@ export function EngineeringRouteRiskPage() {
     <div className="h-full overflow-y-auto bg-slate-950 p-4">
       <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-300">Engineering · Route Risk</h2>
       <p className="mt-1 text-xs text-slate-300">Scores routes by environmental risk, ROW complexity, crossings, and land acquisition needs.</p>
+      <p className="mt-1 text-[11px] text-slate-400">Active project: {activeProjectName || "None selected"}</p>
 
       <div className="mt-4 grid gap-2 rounded border border-white/10 bg-slate-900/40 p-3 md:grid-cols-[1fr_auto]">
         <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm">

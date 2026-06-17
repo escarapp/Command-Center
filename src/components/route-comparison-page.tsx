@@ -7,6 +7,7 @@ import maplibregl from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchProjects } from "@/lib/projects-api";
+import { readActiveProjectSelection } from "@/lib/project-session";
 import { deleteRouteAlternative, fetchRouteAlternativesGeojson, upsertRouteAlternative, type RouteAlternativeFeature } from "@/lib/route-alternatives-api";
 import type { ProjectRow } from "@/types/phase2";
 
@@ -37,6 +38,7 @@ export function RouteComparisonPage() {
 
   const [projects, setProjects] = useState<Array<Pick<ProjectRow, "id" | "name">>>([]);
   const [projectId, setProjectId] = useState<string>("");
+  const [activeProjectName, setActiveProjectName] = useState<string>("");
 
   const [features, setFeatures] = useState<RouteAlternativeFeature[]>([]);
   const [selectedAltId, setSelectedAltId] = useState<string>("");
@@ -52,6 +54,14 @@ export function RouteComparisonPage() {
 
   const [isBusy, setIsBusy] = useState(false);
   const [status, setStatus] = useState<string>("");
+
+  useEffect(() => {
+    const selected = readActiveProjectSelection();
+    if (selected?.id) {
+      setProjectId(selected.id);
+      setActiveProjectName(selected.name);
+    }
+  }, []);
 
   const reload = useCallback(async () => {
     if (!projectId) {
@@ -285,6 +295,7 @@ export function RouteComparisonPage() {
       <aside className="z-10 h-[46vh] overflow-y-auto border-b border-white/10 bg-slate-900/95 p-4 lg:h-full lg:border-b-0 lg:border-r">
         <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-300">Route Comparison</h2>
         <p className="mt-1 text-xs text-slate-300">Create Route A/B/C alternatives and compare length and cost.</p>
+        <p className="mt-1 text-[11px] text-slate-400">Active project: {activeProjectName || "None selected"}</p>
 
         <div className="mt-4 rounded border border-white/10 bg-slate-950/40 p-3">
           <label className="block text-xs font-semibold text-slate-200">Project</label>

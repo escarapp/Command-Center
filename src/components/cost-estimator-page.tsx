@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchProjects } from "@/lib/projects-api";
 import { fetchLatestCostEstimateForProject, upsertCostEstimate } from "@/lib/cost-estimator-api";
+import { readActiveProjectSelection } from "@/lib/project-session";
 import type { ProjectRow } from "@/types/phase2";
 import type { RouteCostEstimateRow } from "@/types/phase3";
 
@@ -23,6 +24,7 @@ export function CostEstimatorPage() {
   const supabase = useMemo(() => createClient(), []);
   const [projects, setProjects] = useState<Array<Pick<ProjectRow, "id" | "name">>>([]);
   const [projectId, setProjectId] = useState<string>("");
+  const [activeProjectName, setActiveProjectName] = useState<string>("");
   const [loadedRow, setLoadedRow] = useState<RouteCostEstimateRow | null>(null);
 
   const [pipelineMiles, setPipelineMiles] = useState<string>("");
@@ -37,6 +39,14 @@ export function CostEstimatorPage() {
 
   const [isBusy, setIsBusy] = useState(false);
   const [status, setStatus] = useState<string>("");
+
+  useEffect(() => {
+    const selected = readActiveProjectSelection();
+    if (selected?.id) {
+      setProjectId(selected.id);
+      setActiveProjectName(selected.name);
+    }
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -148,6 +158,7 @@ export function CostEstimatorPage() {
       <p className="mt-1 text-xs text-slate-300">
         Estimate total project cost using miles, cost-per-mile, pump/tank costs, land/easement, and percentages.
       </p>
+      <p className="mt-1 text-[11px] text-slate-400">Active project: {activeProjectName || "None selected"}</p>
 
       <div className="mt-4 rounded border border-white/10 bg-slate-900/40 p-3">
         <label className="block text-xs font-semibold text-slate-200">Project</label>

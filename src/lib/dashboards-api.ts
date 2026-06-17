@@ -37,21 +37,43 @@ export function computeCapexTotalFromEstimate(row: RouteCostEstimateRow): number
   return base * (1 + pct);
 }
 
-export async function fetchDashboardProjects(supabase: SupabaseClient): Promise<DashboardProjectRow[]> {
-  const { data, error } = await supabase
+export async function fetchDashboardProjects(
+  supabase: SupabaseClient,
+  projectId?: string,
+): Promise<DashboardProjectRow[]> {
+  const scopedProjectId = projectId?.trim();
+
+  let query = supabase
     .from("projects")
     .select("id,name,estimated_mgd,revenue,priority,status,updated_at")
     .order("updated_at", { ascending: false });
+
+  if (scopedProjectId) {
+    query = query.eq("id", scopedProjectId);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
   return (data ?? []) as DashboardProjectRow[];
 }
 
-export async function fetchLatestCostEstimatesByProject(supabase: SupabaseClient): Promise<LatestCostEstimateByProject> {
-  const { data, error } = await supabase
+export async function fetchLatestCostEstimatesByProject(
+  supabase: SupabaseClient,
+  projectId?: string,
+): Promise<LatestCostEstimateByProject> {
+  const scopedProjectId = projectId?.trim();
+
+  let query = supabase
     .from("route_cost_estimates")
     .select("*")
     .order("updated_at", { ascending: false });
+
+  if (scopedProjectId) {
+    query = query.eq("project_id", scopedProjectId);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
 

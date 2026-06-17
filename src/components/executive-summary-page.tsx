@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { computeCapexTotalFromEstimate, fetchDashboardProjects, fetchLatestCostEstimatesByProject } from "@/lib/dashboards-api";
+import { readActiveProjectSelection } from "@/lib/project-session";
 
 type FundingDeadlineRow = {
   id: string;
@@ -27,6 +28,8 @@ export function ExecutiveSummaryPage() {
   const supabase = useMemo(() => createClient(), []);
   const [isBusy, setIsBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
+  const [activeProjectId, setActiveProjectId] = useState<string>("");
+  const [activeProjectName, setActiveProjectName] = useState<string>("");
 
   const [projectCount, setProjectCount] = useState<number>(0);
   const [totalMgd, setTotalMgd] = useState<number>(0);
@@ -40,7 +43,7 @@ export function ExecutiveSummaryPage() {
   async function reload() {
     setIsBusy(true);
     try {
-      const projects = await fetchDashboardProjects(supabase);
+      const projects = await fetchDashboardProjects(supabase, activeProjectId || undefined);
       setProjectCount(projects.length);
 
       let nextTotalMgd = 0;
@@ -52,7 +55,7 @@ export function ExecutiveSummaryPage() {
       setTotalMgd(nextTotalMgd);
       setTotalRevenue(nextTotalRevenue);
 
-      const estimatesByProject = await fetchLatestCostEstimatesByProject(supabase);
+      const estimatesByProject = await fetchLatestCostEstimatesByProject(supabase, activeProjectId || undefined);
       let nextCapexSum = 0;
       let nextCapexCount = 0;
       for (const p of projects) {
@@ -93,6 +96,7 @@ export function ExecutiveSummaryPage() {
       const { data: programs, error: programsError } = await supabase
         .from("funding_programs")
         .select("id,name,agency,deadline")
+        .eq("project_id", activeProjectId || null)
         .gte("deadline", deadlineStart)
         .lte("deadline", deadlineEnd)
         .order("deadline", { ascending: true });
@@ -113,14 +117,21 @@ export function ExecutiveSummaryPage() {
   }
 
   useEffect(() => {
+    const selected = readActiveProjectSelection();
+    setActiveProjectId(selected?.id ?? "");
+    setActiveProjectName(selected?.name ?? "");
+  }, []);
+
+  useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeProjectId]);
 
   return (
     <div className="h-full overflow-y-auto bg-slate-950 p-4">
       <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-300">Executive Summary</h2>
       <p className="mt-1 text-xs text-slate-300">Portfolio overview from Projects, Cost Estimates, CRM follow-ups, and Funding deadlines.</p>
+      <p className="mt-1 text-[11px] text-slate-400">Active project: {activeProjectName || "None selected"}</p>
 
       <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
         <div className="rounded border border-white/10 bg-slate-900/40 p-3">

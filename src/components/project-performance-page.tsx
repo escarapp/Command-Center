@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { countByPriority, countByStatus, fetchDashboardProjects } from "@/lib/dashboards-api";
+import { readActiveProjectSelection } from "@/lib/project-session";
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
@@ -12,12 +13,14 @@ export function ProjectPerformancePage() {
   const supabase = useMemo(() => createClient(), []);
   const [isBusy, setIsBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
+  const [activeProjectId, setActiveProjectId] = useState<string>("");
+  const [activeProjectName, setActiveProjectName] = useState<string>("");
   const [projects, setProjects] = useState<Awaited<ReturnType<typeof fetchDashboardProjects>>>([]);
 
   async function reload() {
     setIsBusy(true);
     try {
-      const next = await fetchDashboardProjects(supabase);
+      const next = await fetchDashboardProjects(supabase, activeProjectId || undefined);
       setProjects(next);
       setStatusMessage("Loaded project performance.");
     } catch (error) {
@@ -29,9 +32,15 @@ export function ProjectPerformancePage() {
   }
 
   useEffect(() => {
+    const selected = readActiveProjectSelection();
+    setActiveProjectId(selected?.id ?? "");
+    setActiveProjectName(selected?.name ?? "");
+  }, []);
+
+  useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeProjectId]);
 
   const statusCounts = useMemo(() => countByStatus(projects), [projects]);
   const priorityCounts = useMemo(() => countByPriority(projects), [projects]);
@@ -48,6 +57,7 @@ export function ProjectPerformancePage() {
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-300">Project Performance</h2>
           <p className="mt-1 text-xs text-slate-300">Quick health view: counts by status + priority, plus recently updated projects.</p>
+          <p className="mt-1 text-[11px] text-slate-400">Active project: {activeProjectName || "None selected"}</p>
         </div>
         <button
           type="button"
