@@ -90,16 +90,40 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
   const supabase = useMemo(() => createClient(), []);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [userRole, setUserRole] = useState<string>("employee");
+  const [isInvestorUser, setIsInvestorUser] = useState(false);
+  const [hasManagerScope, setHasManagerScope] = useState(false);
   const [fallbackActiveProjectName, setFallbackActiveProjectName] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const displayActiveProjectName = activeProjectName ?? fallbackActiveProjectName ?? "No active project";
-  const moreItems = NAV_MORE_ITEMS;
-  const planningActive = PLANNING_ITEMS.some((item) => item.href === pathname);
-  const dashboardsActive = DASHBOARD_ITEMS.some((item) => item.href === pathname);
-  const engineeringActive = ENGINEERING_ITEMS.some((item) => item.href === pathname);
-  const marketActive = MARKET_ITEMS.some((item) => item.href === pathname);
-  const investorPortalActive = INVESTOR_PORTAL_ITEMS.some((item) => item.href === pathname);
-  const digitalTwinActive = DIGITAL_TWIN_ITEMS.some((item) => item.href === pathname);
+
+  const isPlatformManager = userRole === "platform_manager" || userRole === "admin";
+  const isInvestorOnly = isInvestorUser && !hasManagerScope && !isPlatformManager;
+  const moreItems = useMemo(() => {
+    const base = NAV_MORE_ITEMS.filter((item) => {
+      if (item.href === "/employees") return hasManagerScope || isPlatformManager;
+      if (item.href === "/crm" || item.href === "/funding" || item.href === "/documents" || item.href === "/ai") {
+        return !isInvestorOnly;
+      }
+      return true;
+    });
+    return base;
+  }, [hasManagerScope, isInvestorOnly, isPlatformManager]);
+
+  const planningItems = useMemo(() => (isInvestorOnly ? [] : PLANNING_ITEMS), [isInvestorOnly]);
+  const dashboardItems = useMemo(() => (isInvestorOnly ? [] : DASHBOARD_ITEMS), [isInvestorOnly]);
+  const engineeringItems = useMemo(() => (isInvestorOnly ? [] : ENGINEERING_ITEMS), [isInvestorOnly]);
+  const marketItems = useMemo(() => (isInvestorOnly ? [] : MARKET_ITEMS), [isInvestorOnly]);
+  const investorPortalItems = useMemo(
+    () => ((isInvestorOnly || isInvestorUser || hasManagerScope || isPlatformManager) ? INVESTOR_PORTAL_ITEMS : []),
+    [hasManagerScope, isInvestorOnly, isInvestorUser, isPlatformManager],
+  );
+  const digitalTwinItems = useMemo(() => (isInvestorOnly ? [] : DIGITAL_TWIN_ITEMS), [isInvestorOnly]);
+  const planningActive = planningItems.some((item) => item.href === pathname);
+  const dashboardsActive = dashboardItems.some((item) => item.href === pathname);
+  const engineeringActive = engineeringItems.some((item) => item.href === pathname);
+  const marketActive = marketItems.some((item) => item.href === pathname);
+  const investorPortalActive = investorPortalItems.some((item) => item.href === pathname);
+  const digitalTwinActive = digitalTwinItems.some((item) => item.href === pathname);
   const moreActive = moreItems.some((item) => item.href === pathname);
 
   useEffect(() => {
@@ -116,12 +140,39 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
 
       if (!isMounted || !user) return;
 
-      const profileResult = await supabase.from("user_profiles").select("role").eq("id", user.id).maybeSingle();
+      const [profileResult, companyMemberResult, projectMemberResult, ownedCompanyResult, ownedProjectResult, investorResult] = await Promise.all([
+        supabase.from("user_profiles").select("role").eq("id", user.id).maybeSingle(),
+        supabase
+          .from("company_members")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .in("member_role", ["company_admin", "manager"]),
+        supabase
+          .from("project_members")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .in("access_role", ["company_admin", "manager"]),
+        supabase.from("companies").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
+        supabase.from("projects").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
+        supabase
+          .from("investors")
+          .select("id", { count: "exact", head: true })
+          .eq("investor_user_id", user.id)
+          .eq("status", "active"),
+      ]);
 
       const role = profileResult.data?.role ?? "employee";
+      const managerScopeCount =
+        (companyMemberResult.count ?? 0) +
+        (projectMemberResult.count ?? 0) +
+        (ownedCompanyResult.count ?? 0) +
+        (ownedProjectResult.count ?? 0);
+      const investorCount = investorResult.count ?? 0;
 
       if (!isMounted) return;
       setUserRole(role);
+      setHasManagerScope(role === "platform_manager" || role === "admin" || managerScopeCount > 0);
+      setIsInvestorUser(investorCount > 0);
     }
 
     void loadPermissions();
@@ -237,7 +288,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
               </summary>
 
               <div className="absolute right-0 top-full z-30 mt-2 grid min-w-[210px] gap-1 rounded-lg border border-slate-700 bg-slate-950/95 p-2 shadow-lg backdrop-blur">
-                {PLANNING_ITEMS.map((item) => {
+                {planningItems.map((item) => {
                   const active = pathname === item.href;
                   return (
                     <Link
@@ -273,7 +324,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
               </summary>
 
               <div className="absolute right-0 top-full z-30 mt-2 grid min-w-[210px] gap-1 rounded-lg border border-slate-700 bg-slate-950/95 p-2 shadow-lg backdrop-blur">
-                {DASHBOARD_ITEMS.map((item) => {
+                {dashboardItems.map((item) => {
                   const active = pathname === item.href;
                   return (
                     <Link
@@ -309,7 +360,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
               </summary>
 
               <div className="absolute right-0 top-full z-30 mt-2 grid min-w-[210px] gap-1 rounded-lg border border-slate-700 bg-slate-950/95 p-2 shadow-lg backdrop-blur">
-                {ENGINEERING_ITEMS.map((item) => {
+                {engineeringItems.map((item) => {
                   const active = pathname === item.href;
                   return (
                     <Link
@@ -345,7 +396,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
               </summary>
 
               <div className="absolute right-0 top-full z-30 mt-2 grid min-w-[220px] gap-1 rounded-lg border border-slate-700 bg-slate-950/95 p-2 shadow-lg backdrop-blur">
-                {MARKET_ITEMS.map((item) => {
+                {marketItems.map((item) => {
                   const active = pathname === item.href;
                   return (
                     <Link
@@ -381,7 +432,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
               </summary>
 
               <div className="absolute right-0 top-full z-30 mt-2 grid min-w-[220px] gap-1 rounded-lg border border-slate-700 bg-slate-950/95 p-2 shadow-lg backdrop-blur">
-                {INVESTOR_PORTAL_ITEMS.map((item) => {
+                {investorPortalItems.map((item) => {
                   const active = pathname === item.href;
                   return (
                     <Link
@@ -417,7 +468,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
               </summary>
 
               <div className="absolute right-0 top-full z-30 mt-2 grid min-w-[220px] gap-1 rounded-lg border border-slate-700 bg-slate-950/95 p-2 shadow-lg backdrop-blur">
-                {DIGITAL_TWIN_ITEMS.map((item) => {
+                {digitalTwinItems.map((item) => {
                   const active = pathname === item.href;
                   return (
                     <Link
@@ -451,9 +502,14 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
           </button>
 
           <span className="hidden max-w-[280px] truncate text-xs text-slate-300 sm:block">{userEmail}</span>
-          {(userRole === "platform_manager" || userRole === "admin") && (
+          {isPlatformManager && (
             <span className="hidden rounded-full bg-cyan-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-950 sm:inline">
               Platform Manager
+            </span>
+          )}
+          {isInvestorOnly && (
+            <span className="hidden rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-950 sm:inline">
+              Investor
             </span>
           )}
           <button
@@ -508,7 +564,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
             })}
 
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-300">Planning Tools</p>
-            {PLANNING_ITEMS.map((item) => {
+            {planningItems.map((item) => {
               const active = pathname === item.href;
               return (
                 <Link
@@ -527,7 +583,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
             })}
 
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-300">Dashboards</p>
-            {DASHBOARD_ITEMS.map((item) => {
+            {dashboardItems.map((item) => {
               const active = pathname === item.href;
               return (
                 <Link
@@ -546,7 +602,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
             })}
 
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-300">Engineering</p>
-            {ENGINEERING_ITEMS.map((item) => {
+            {engineeringItems.map((item) => {
               const active = pathname === item.href;
               return (
                 <Link
@@ -565,7 +621,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
             })}
 
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-300">Market Intelligence</p>
-            {MARKET_ITEMS.map((item) => {
+            {marketItems.map((item) => {
               const active = pathname === item.href;
               return (
                 <Link
@@ -584,7 +640,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
             })}
 
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-300">Investor Portal</p>
-            {INVESTOR_PORTAL_ITEMS.map((item) => {
+            {investorPortalItems.map((item) => {
               const active = pathname === item.href;
               return (
                 <Link
@@ -603,7 +659,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
             })}
 
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-300">Digital Twin</p>
-            {DIGITAL_TWIN_ITEMS.map((item) => {
+            {digitalTwinItems.map((item) => {
               const active = pathname === item.href;
               return (
                 <Link

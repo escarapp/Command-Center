@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchProjects } from "@/lib/projects-api";
 import { fetchOrganizations } from "@/lib/crm-api";
+import { readActiveProjectSelection } from "@/lib/project-session";
 import { deleteUploadedFile, fetchUploadedFiles, uploadPlanningFile } from "@/lib/file-uploads-api";
 import type { ProjectRow, OrganizationRow } from "@/types/phase2";
 import type { UploadedFileRow } from "@/types/phase3";
@@ -26,6 +27,8 @@ export function FileUploadsPage() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [orgs, setOrgs] = useState<OrganizationRow[]>([]);
   const [rows, setRows] = useState<UploadedFileRow[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string>("");
+  const [activeProjectName, setActiveProjectName] = useState<string>("");
 
   const [file, setFile] = useState<File | null>(null);
   const [projectId, setProjectId] = useState<string>("");
@@ -39,11 +42,22 @@ export function FileUploadsPage() {
   const [status, setStatus] = useState<string>("");
 
   async function reload() {
-    const [p, o, f] = await Promise.all([fetchProjects(supabase), fetchOrganizations(supabase), fetchUploadedFiles(supabase)]);
+    const [p, o, f] = await Promise.all([
+      fetchProjects(supabase),
+      fetchOrganizations(supabase, activeProjectId || undefined),
+      fetchUploadedFiles(supabase),
+    ]);
     setProjects(p);
     setOrgs(o);
     setRows(f);
   }
+
+  useEffect(() => {
+    const selected = readActiveProjectSelection();
+    setActiveProjectId(selected?.id ?? "");
+    setActiveProjectName(selected?.name ?? "");
+    setProjectId(selected?.id ?? "");
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -55,11 +69,16 @@ export function FileUploadsPage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeProjectId]);
 
   async function handleUpload() {
     if (!file) {
       setStatus("Pick a file first.");
+      return;
+    }
+
+    if (!projectId) {
+      setStatus("Pick an active project in Projects first.");
       return;
     }
 
@@ -107,6 +126,7 @@ export function FileUploadsPage() {
     <div className="h-full overflow-y-auto bg-slate-950 p-4">
       <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-300">File Uploads</h2>
       <p className="mt-1 text-xs text-slate-300">Upload planning files to Supabase Storage and assign them to projects, utilities, districts, or counties.</p>
+      <p className="mt-1 text-[11px] text-slate-400">Active project: {activeProjectName || "None selected"}</p>
 
       <div className="mt-4 rounded border border-white/10 bg-slate-900/40 p-3">
         <div className="grid gap-2 md:grid-cols-2">
@@ -120,6 +140,7 @@ export function FileUploadsPage() {
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-[11px] text-slate-400">Defaulted from your active project; you can override if needed.</p>
           </div>
 
           <div>
