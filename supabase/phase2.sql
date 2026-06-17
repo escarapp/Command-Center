@@ -5,9 +5,31 @@
 -- 1) Projects
 -- -----------------------------
 
+create table if not exists public.companies (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists companies_owner_idx on public.companies (owner_id);
+
+create table if not exists public.company_members (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references public.companies(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  member_role text not null default 'member',
+  created_at timestamptz not null default now(),
+  constraint company_members_unique unique (company_id, user_id)
+);
+
+create index if not exists company_members_company_idx on public.company_members (company_id);
+create index if not exists company_members_user_idx on public.company_members (user_id);
+
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  company_id uuid null,
   organization_id uuid null,
   name text not null,
   estimated_mgd numeric null,
@@ -20,8 +42,91 @@ create table if not exists public.projects (
   constraint projects_priority_check check (priority in ('low', 'medium', 'high', 'critical'))
 );
 
+alter table public.projects
+  add column if not exists company_id uuid null;
+
 create index if not exists projects_owner_idx on public.projects (owner_id);
+create index if not exists projects_company_idx on public.projects (company_id);
 create index if not exists projects_org_idx on public.projects (owner_id, organization_id);
+
+alter table public.projects
+  drop constraint if exists projects_company_id_fkey;
+
+alter table public.projects
+  add constraint projects_company_id_fkey
+  foreign key (company_id) references public.companies(id) on delete set null;
+
+create table if not exists public.project_members (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  access_role text not null default 'editor',
+  created_at timestamptz not null default now(),
+  constraint project_members_unique unique (project_id, user_id)
+);
+
+create index if not exists project_members_project_idx on public.project_members (project_id);
+create index if not exists project_members_user_idx on public.project_members (user_id);
+
+create or replace function public.is_company_member(p_company_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.company_members cm
+    where cm.company_id = p_company_id
+      and cm.user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_project_member(p_project_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.project_members pm
+    where pm.project_id = p_project_id
+      and pm.user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_company_owner(p_company_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.companies c
+    where c.id = p_company_id
+      and c.owner_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_project_owner(p_project_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.projects p
+    where p.id = p_project_id
+      and p.owner_id = auth.uid()
+  );
+$$;
 
 -- Add fields to GIS features for pipeline builder + project linking.
 alter table public.gis_features add column if not exists project_id uuid null;
@@ -84,6 +189,124 @@ create policy "Users can update own projects" on public.projects
 drop policy if exists "Users can delete own projects" on public.projects;
 create policy "Users can delete own projects" on public.projects
   for delete using (owner_id = auth.uid());
+
+alter table public.companies enable row level security;
+alter table public.company_members enable row level security;
+alter table public.project_members enable row level security;
+
+drop policy if exists "Users can select accessible companies" on public.companies;
+create policy "Users can select accessible companies"
+on public.companies
+for select
+using (
+  owner_id = auth.uid()
+  or public.is_company_member(id)
+);
+
+drop policy if exists "Users can insert companies" on public.companies;
+create policy "Users can insert companies"
+on public.companies
+for insert
+with check (owner_id = auth.uid());
+
+drop policy if exists "Users can update own companies" on public.companies;
+create policy "Users can update own companies"
+on public.companies
+for update
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists "Users can delete own companies" on public.companies;
+create policy "Users can delete own companies"
+on public.companies
+for delete
+using (owner_id = auth.uid());
+
+drop policy if exists "Users can select company memberships" on public.company_members;
+create policy "Users can select company memberships"
+on public.company_members
+for select
+using (
+  user_id = auth.uid()
+  or public.is_company_owner(company_id)
+);
+
+drop policy if exists "Company owners can manage memberships" on public.company_members;
+create policy "Company owners can manage memberships"
+on public.company_members
+for all
+using (
+  public.is_company_owner(company_id)
+)
+with check (
+  public.is_company_owner(company_id)
+);
+
+drop policy if exists "Users can select project memberships" on public.project_members;
+create policy "Users can select project memberships"
+on public.project_members
+for select
+using (
+  user_id = auth.uid()
+  or public.is_project_owner(project_id)
+);
+
+drop policy if exists "Project owners can manage memberships" on public.project_members;
+create policy "Project owners can manage memberships"
+on public.project_members
+for all
+using (
+  public.is_project_owner(project_id)
+)
+with check (
+  public.is_project_owner(project_id)
+);
+
+drop policy if exists "Users can select accessible projects" on public.projects;
+create policy "Users can select accessible projects"
+on public.projects
+for select
+using (
+  owner_id = auth.uid()
+  or public.is_company_member(company_id)
+  or public.is_project_member(id)
+);
+
+drop policy if exists "Users can insert own projects" on public.projects;
+create policy "Users can insert own projects"
+on public.projects
+for insert
+with check (
+  owner_id = auth.uid()
+  and (
+    company_id is null
+    or public.is_company_member(company_id)
+  )
+);
+
+drop policy if exists "Users can update own projects" on public.projects;
+create policy "Users can update own projects"
+on public.projects
+for update
+using (
+  owner_id = auth.uid()
+  or public.is_company_member(company_id)
+  or public.is_project_member(id)
+)
+with check (
+  owner_id = auth.uid()
+  or public.is_company_member(company_id)
+  or public.is_project_member(id)
+);
+
+drop policy if exists "Users can delete own projects" on public.projects;
+create policy "Users can delete own projects"
+on public.projects
+for delete
+using (
+  owner_id = auth.uid()
+  or public.is_project_member(id)
+);
 
 -- -----------------------------
 -- 2) Stakeholder CRM

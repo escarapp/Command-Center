@@ -1,5 +1,20 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ProjectRow, ProjectPriority } from "@/types/phase2";
+import type { CompanyRow, ProjectRow, ProjectPriority } from "@/types/phase2";
+
+export async function fetchCompanies(supabase: SupabaseClient): Promise<CompanyRow[]> {
+  const { data, error } = await supabase.from("companies").select("*").order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CompanyRow[];
+}
+
+export async function createCompany(supabase: SupabaseClient, input: { name: string }): Promise<CompanyRow> {
+  const name = input.name.trim();
+  if (!name) throw new Error("Company name is required");
+
+  const { data, error } = await supabase.from("companies").insert({ name }).select("*").single();
+  if (error) throw new Error(error.message);
+  return data as CompanyRow;
+}
 
 export async function fetchProjects(supabase: SupabaseClient): Promise<ProjectRow[]> {
   const { data, error } = await supabase
@@ -10,9 +25,22 @@ export async function fetchProjects(supabase: SupabaseClient): Promise<ProjectRo
   return (data ?? []) as ProjectRow[];
 }
 
+export async function fetchProjectById(supabase: SupabaseClient, id: string): Promise<ProjectRow | null> {
+  const projectId = id.trim();
+  if (!projectId) return null;
+
+  const { data, error } = await supabase.from("projects").select("*").eq("id", projectId).single();
+  if (error) {
+    if (error.code === "PGRST116") return null;
+    throw new Error(error.message);
+  }
+
+  return data as ProjectRow;
+}
+
 export async function createProject(
   supabase: SupabaseClient,
-  input: { name: string; priority?: ProjectPriority; status?: string; notes?: string },
+  input: { name: string; priority?: ProjectPriority; status?: string; notes?: string; company_id?: string | null },
 ): Promise<ProjectRow> {
   const name = input.name.trim();
   if (!name) throw new Error("Project name is required");
@@ -21,6 +49,7 @@ export async function createProject(
     .from("projects")
     .insert({
       name,
+      company_id: input.company_id ?? null,
       priority: input.priority ?? "low",
       status: input.status ?? "idea",
       notes: input.notes?.trim() ? input.notes.trim() : null,

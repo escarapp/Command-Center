@@ -3,6 +3,7 @@ export type ProjectPriority = (typeof PROJECT_PRIORITIES)[number];
 
 export type ProjectRow = {
   id: string;
+  company_id: string | null;
   organization_id: string | null;
   name: string;
   estimated_mgd: number | null;
@@ -12,6 +13,29 @@ export type ProjectRow = {
   notes: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type CompanyRow = {
+  id: string;
+  owner_id: string;
+  name: string;
+  created_at: string;
+};
+
+export type CompanyMemberRow = {
+  id: string;
+  company_id: string;
+  user_id: string;
+  member_role: string;
+  created_at: string;
+};
+
+export type ProjectMemberRow = {
+  id: string;
+  project_id: string;
+  user_id: string;
+  access_role: string;
+  created_at: string;
 };
 
 export type OrganizationRow = {

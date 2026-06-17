@@ -1,21 +1,29 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { createProject, deleteProject, fetchProjects } from "@/lib/projects-api";
-import type { ProjectRow } from "@/types/phase2";
+import { createCompany, createProject, deleteProject, fetchCompanies, fetchProjects } from "@/lib/projects-api";
+import { readActiveProjectSelection, setActiveProjectSelection } from "@/lib/project-session";
+import type { CompanyRow, ProjectRow } from "@/types/phase2";
 
 export function ProjectsPage() {
+  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+  const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [rows, setRows] = useState<ProjectRow[]>([]);
+  const [companyName, setCompanyName] = useState("");
   const [name, setName] = useState("");
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [isBusy, setIsBusy] = useState(false);
+  const [activeProjectId, setActiveProjectId] = useState<string>("");
+  const [activeProjectName, setActiveProjectName] = useState<string>("");
 
   async function reload() {
     try {
-      const next = await fetchProjects(supabase);
-      setRows(next);
+      const [companyRows, projectRows] = await Promise.all([fetchCompanies(supabase), fetchProjects(supabase)]);
+      setCompanies(companyRows);
+      setRows(projectRows);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       setStatusMessage(`Load failed: ${message}. Did you run supabase/phase2.sql?`);
@@ -27,7 +35,30 @@ export function ProjectsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function handleCreate() {
+  useEffect(() => {
+    const selection = readActiveProjectSelection();
+    if (selection) {
+      setActiveProjectId(selection.id);
+      setActiveProjectName(selection.name);
+    }
+  }, []);
+
+  async function handleCreateCompany() {
+    setIsBusy(true);
+    try {
+      await createCompany(supabase, { name: companyName });
+      setCompanyName("");
+      await reload();
+      setStatusMessage("Company created.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      setStatusMessage(`Company create failed: ${message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleCreateProject() {
     setIsBusy(true);
     try {
       await createProject(supabase, { name });
@@ -59,10 +90,58 @@ export function ProjectsPage() {
     }
   }
 
+  function handleOpen(row: ProjectRow) {
+    setActiveProjectSelection({ id: row.id, name: row.name });
+    setActiveProjectId(row.id);
+    setActiveProjectName(row.name);
+    router.push("/dashboard");
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-slate-950 p-4">
       <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-300">Projects</h2>
-      <p className="mt-1 text-xs text-slate-300">Create project opportunities and link pipeline routes to them.</p>
+      <p className="mt-1 text-xs text-slate-300">
+        Pick the desalination project you want to work in, then open the workspace for its map, documents, estimates, and reports.
+      </p>
+
+      <div className="mt-4 rounded border border-white/10 bg-slate-900/40 p-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-300">Company</p>
+        <p className="mt-1 text-xs text-slate-300">Create the desalination company here first. Then add projects like RGV Desalination or Corpus Christi Desalination underneath it.</p>
+
+        <div className="mt-3 grid gap-2 md:grid-cols-[1fr_120px]">
+          <input
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+            placeholder="New company name"
+            className="w-full rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm"
+          />
+          <button
+            type="button"
+            onClick={() => void handleCreateCompany()}
+            disabled={isBusy || !companyName.trim()}
+            className="rounded-md border border-cyan-600 bg-cyan-800/40 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-50"
+          >
+            Add company
+          </button>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          {companies.length === 0 ? (
+            <p className="text-xs text-slate-300">No companies yet.</p>
+          ) : (
+            companies.map((company) => (
+              <div key={company.id} className="rounded border border-slate-700 bg-slate-900/30 px-3 py-2 text-xs text-slate-200">
+                {company.name}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded border border-cyan-400/20 bg-cyan-950/30 p-3 text-xs text-cyan-100">
+        <p className="font-semibold uppercase tracking-[0.14em] text-cyan-300">Active project</p>
+        <p className="mt-1">{activeProjectName || "No project selected yet."}</p>
+      </div>
 
       <div className="mt-4 grid gap-2 rounded border border-white/10 bg-slate-900/40 p-3 md:grid-cols-[1fr_120px]">
         <input
@@ -73,7 +152,7 @@ export function ProjectsPage() {
         />
         <button
           type="button"
-          onClick={() => void handleCreate()}
+          onClick={() => void handleCreateProject()}
           disabled={isBusy || !name.trim()}
           className="rounded-md border border-cyan-600 bg-cyan-800/40 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-50"
         >
@@ -91,14 +170,27 @@ export function ProjectsPage() {
                 <p className="truncate text-sm font-semibold text-slate-100">{row.name}</p>
                 <p className="text-xs text-slate-400">Status: {row.status} · Priority: {row.priority}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => void handleDelete(row)}
-                disabled={isBusy}
-                className="rounded border border-rose-600 bg-rose-800/30 px-2 py-1 text-xs font-semibold text-rose-100 disabled:opacity-50"
-              >
-                Delete
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpen(row)}
+                  className={
+                    activeProjectId === row.id
+                      ? "rounded border border-cyan-400 bg-cyan-800/40 px-2 py-1 text-xs font-semibold text-cyan-100"
+                      : "rounded border border-cyan-600 bg-cyan-800/30 px-2 py-1 text-xs font-semibold text-cyan-100"
+                  }
+                >
+                  {activeProjectId === row.id ? "Active" : "Open"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDelete(row)}
+                  disabled={isBusy}
+                  className="rounded border border-rose-600 bg-rose-800/30 px-2 py-1 text-xs font-semibold text-rose-100 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           ))
         )}

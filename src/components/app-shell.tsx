@@ -5,9 +5,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { ChevronDown, LogOut, Menu, X } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { clearActiveProjectSelection } from "@/lib/project-session";
 
 type AppShellProps = {
   userEmail: string;
+  activeProjectName?: string;
   children: React.ReactNode;
 };
 
@@ -81,7 +83,7 @@ function classNames(...parts: Array<string | false>) {
   return parts.filter(Boolean).join(" ");
 }
 
-export function AppShell({ userEmail, children }: AppShellProps) {
+export function AppShell({ userEmail, activeProjectName, children }: AppShellProps) {
   const router = useRouter();
   const pathname = usePathname();
   const supabase = useMemo(() => createClient(), []);
@@ -112,6 +114,7 @@ export function AppShell({ userEmail, children }: AppShellProps) {
 
   async function handleSignOut() {
     setIsSigningOut(true);
+    clearActiveProjectSelection();
     await supabase.auth.signOut();
     router.replace("/login");
     router.refresh();
@@ -125,6 +128,18 @@ export function AppShell({ userEmail, children }: AppShellProps) {
           <p className="hidden truncate text-xs text-slate-300 xl:block">
             Private workspace for route planning and infrastructure intelligence
           </p>
+        </div>
+
+        <div className="hidden min-w-0 items-center gap-2 lg:flex">
+          <Link
+            href="/projects"
+            className="rounded-full border border-cyan-400/40 bg-cyan-900/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-100 transition hover:bg-cyan-900/35"
+          >
+            Projects
+          </Link>
+          <span className="max-w-[220px] truncate rounded-full border border-white/10 bg-slate-900/70 px-3 py-1 text-xs text-slate-200">
+            {activeProjectName ?? "No active project"}
+          </span>
         </div>
 
         <nav className="hidden items-center gap-1 md:flex">

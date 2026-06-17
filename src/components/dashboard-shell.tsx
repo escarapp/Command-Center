@@ -5,11 +5,12 @@ import { RgvMap } from "@/components/rgv-map";
 
 type DashboardShellProps = {
   userEmail: string;
+  activeProjectName?: string;
 };
 
-export function DashboardShell({ userEmail }: DashboardShellProps) {
+export function DashboardShell({ userEmail, activeProjectName }: DashboardShellProps) {
   return (
-    <AppShell userEmail={userEmail}>
+    <AppShell userEmail={userEmail} activeProjectName={activeProjectName}>
       <RgvMap />
     </AppShell>
   );
