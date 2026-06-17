@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchDashboardProjects } from "@/lib/dashboards-api";
 import { fetchOrganizations } from "@/lib/crm-api";
+import { readActiveProjectSelection } from "@/lib/project-session";
 import type { OrganizationRow } from "@/types/phase2";
 import type { MeetingBriefRow } from "@/types/phase4";
 
@@ -53,11 +54,12 @@ export function LegislativeBriefsPage() {
   const [briefText, setBriefText] = useState<string>("");
 
   const [savedBriefs, setSavedBriefs] = useState<MeetingBriefRow[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string>("");
 
   async function reload() {
     setIsBusy(true);
     try {
-      const [p, o] = await Promise.all([fetchDashboardProjects(supabase), fetchOrganizations(supabase)]);
+      const [p, o] = await Promise.all([fetchDashboardProjects(supabase), fetchOrganizations(supabase, activeProjectId || undefined)]);
       setProjects(p);
       setOrganizations(o);
 
@@ -85,9 +87,17 @@ export function LegislativeBriefsPage() {
   }
 
   useEffect(() => {
+    const selected = readActiveProjectSelection();
+    setActiveProjectId(selected?.id ?? "");
+    if (selected?.id) {
+      setProjectId(selected.id);
+    }
+  }, []);
+
+  useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeProjectId]);
 
   const selectedProject = useMemo(() => projects.find((p) => p.id === projectId) ?? null, [projects, projectId]);
   const selectedOrg = useMemo(() => organizations.find((o) => o.id === organizationId) ?? null, [organizations, organizationId]);

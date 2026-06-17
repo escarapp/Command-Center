@@ -142,16 +142,8 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
 
       const [profileResult, companyMemberResult, projectMemberResult, ownedCompanyResult, ownedProjectResult, investorResult] = await Promise.all([
         supabase.from("user_profiles").select("role").eq("id", user.id).maybeSingle(),
-        supabase
-          .from("company_members")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", user.id)
-          .in("member_role", ["company_admin", "manager"]),
-        supabase
-          .from("project_members")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", user.id)
-          .in("access_role", ["company_admin", "manager"]),
+        supabase.from("company_members").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+        supabase.from("project_members").select("id", { count: "exact", head: true }).eq("user_id", user.id),
         supabase.from("companies").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
         supabase.from("projects").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
         supabase
@@ -162,7 +154,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
       ]);
 
       const role = profileResult.data?.role ?? "employee";
-      const managerScopeCount =
+      const internalScopeCount =
         (companyMemberResult.count ?? 0) +
         (projectMemberResult.count ?? 0) +
         (ownedCompanyResult.count ?? 0) +
@@ -171,8 +163,8 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
 
       if (!isMounted) return;
       setUserRole(role);
-      setHasManagerScope(role === "platform_manager" || role === "admin" || managerScopeCount > 0);
-      setIsInvestorUser(investorCount > 0);
+      setHasManagerScope(role === "platform_manager" || role === "admin" || internalScopeCount > 0);
+      setIsInvestorUser(investorCount > 0 && internalScopeCount === 0);
     }
 
     void loadPermissions();
