@@ -11,28 +11,6 @@ export default async function EmployeesRoute() {
 
   if (!user) redirect("/login");
 
-  const [{ data: profile }, { count: companyScopeCount }, { count: projectScopeCount }] = await Promise.all([
-    supabase.from("user_profiles").select("role").eq("id", user.id).maybeSingle(),
-    supabase
-      .from("company_members")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .in("member_role", ["company_admin", "manager"]),
-    supabase
-      .from("project_members")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .in("access_role", ["company_admin", "manager"]),
-  ]);
-
-  const role = profile?.role ?? "employee";
-  const isPlatformManager = role === "platform_manager" || role === "admin";
-  const hasScopeManagerAccess = (companyScopeCount ?? 0) > 0 || (projectScopeCount ?? 0) > 0;
-
-  if (!isPlatformManager && !hasScopeManagerAccess) {
-    redirect("/dashboard");
-  }
-
   return (
     <AppShell userEmail={user.email ?? "Authenticated User"}>
       <EmployeesPage />

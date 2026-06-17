@@ -40,6 +40,7 @@ export type ProjectMemberRow = {
 
 export type OrganizationRow = {
   id: string;
+  project_id: string | null;
   name: string;
   org_type: string;
   notes: string | null;
@@ -49,6 +50,7 @@ export type OrganizationRow = {
 
 export type FundingProgramRow = {
   id: string;
+  project_id: string | null;
   name: string;
   agency: string | null;
   eligibility: string | null;

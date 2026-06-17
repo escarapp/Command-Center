@@ -3,11 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { createFundingProgram, deleteFundingProgram, fetchFundingPrograms } from "@/lib/funding-api";
+import { readActiveProjectSelection } from "@/lib/project-session";
 import type { FundingProgramRow } from "@/types/phase2";
 
 export function FundingPage() {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<FundingProgramRow[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState("");
+  const [activeProjectName, setActiveProjectName] = useState("");
   const [name, setName] = useState("");
   const [agency, setAgency] = useState("");
   const [deadline, setDeadline] = useState("");
@@ -16,8 +19,13 @@ export function FundingPage() {
   const [isBusy, setIsBusy] = useState(false);
 
   async function reload() {
+    if (!activeProjectId) {
+      setRows([]);
+      return;
+    }
+
     try {
-      const next = await fetchFundingPrograms(supabase);
+      const next = await fetchFundingPrograms(supabase, activeProjectId);
       setRows(next);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -26,14 +34,25 @@ export function FundingPage() {
   }
 
   useEffect(() => {
+    const selected = readActiveProjectSelection();
+    setActiveProjectId(selected?.id ?? "");
+    setActiveProjectName(selected?.name ?? "");
+  }, []);
+
+  useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeProjectId]);
 
   async function handleCreate() {
     setIsBusy(true);
     try {
-      await createFundingProgram(supabase, { name, agency, deadline, url });
+      if (!activeProjectId) {
+        setStatusMessage("Pick an active project from Projects first.");
+        return;
+      }
+
+      await createFundingProgram(supabase, { project_id: activeProjectId, name, agency, deadline, url });
       setName("");
       setAgency("");
       setDeadline("");
@@ -69,6 +88,7 @@ export function FundingPage() {
     <div className="h-full overflow-y-auto bg-slate-950 p-4">
       <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-300">Funding</h2>
       <p className="mt-1 text-xs text-slate-300">Track funding programs, eligibility, and deadlines.</p>
+      <p className="mt-1 text-[11px] text-slate-400">Active project: {activeProjectName || "None selected"}</p>
 
       <div className="mt-4 grid gap-2 rounded border border-white/10 bg-slate-900/40 p-3 md:grid-cols-2">
         <input
@@ -106,7 +126,9 @@ export function FundingPage() {
       </div>
 
       <div className="mt-4 space-y-2">
-        {rows.length === 0 ? (
+        {!activeProjectId ? (
+          <p className="text-xs text-slate-300">Select an active project in Projects to use Funding.</p>
+        ) : rows.length === 0 ? (
           <p className="text-xs text-slate-300">No funding programs yet.</p>
         ) : (
           rows.map((row) => (

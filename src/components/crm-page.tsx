@@ -3,19 +3,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { createOrganization, deleteOrganization, fetchOrganizations } from "@/lib/crm-api";
+import { readActiveProjectSelection } from "@/lib/project-session";
 import type { OrganizationRow } from "@/types/phase2";
 
 export function CrmPage() {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<OrganizationRow[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string>("");
+  const [activeProjectName, setActiveProjectName] = useState<string>("");
   const [name, setName] = useState("");
   const [orgType, setOrgType] = useState("utility");
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [isBusy, setIsBusy] = useState(false);
 
   async function reload() {
+    if (!activeProjectId) {
+      setRows([]);
+      return;
+    }
+
     try {
-      const next = await fetchOrganizations(supabase);
+      const next = await fetchOrganizations(supabase, activeProjectId);
       setRows(next);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -24,14 +32,25 @@ export function CrmPage() {
   }
 
   useEffect(() => {
+    const selected = readActiveProjectSelection();
+    setActiveProjectId(selected?.id ?? "");
+    setActiveProjectName(selected?.name ?? "");
+  }, []);
+
+  useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeProjectId]);
 
   async function handleCreate() {
     setIsBusy(true);
     try {
-      await createOrganization(supabase, { name, org_type: orgType });
+      if (!activeProjectId) {
+        setStatusMessage("Pick an active project from Projects first.");
+        return;
+      }
+
+      await createOrganization(supabase, { project_id: activeProjectId, name, org_type: orgType });
       setName("");
       await reload();
       setStatusMessage("Organization created.");
@@ -64,6 +83,7 @@ export function CrmPage() {
     <div className="h-full overflow-y-auto bg-slate-950 p-4">
       <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-300">Stakeholder CRM</h2>
       <p className="mt-1 text-xs text-slate-300">Organizations are the foundation for contacts, meetings, and notes.</p>
+      <p className="mt-1 text-[11px] text-slate-400">Active project: {activeProjectName || "None selected"}</p>
 
       <div className="mt-4 grid gap-2 rounded border border-white/10 bg-slate-900/40 p-3 md:grid-cols-[1fr_180px_120px]">
         <input
@@ -89,7 +109,9 @@ export function CrmPage() {
       </div>
 
       <div className="mt-4 space-y-2">
-        {rows.length === 0 ? (
+        {!activeProjectId ? (
+          <p className="text-xs text-slate-300">Select an active project in Projects to use CRM.</p>
+        ) : rows.length === 0 ? (
           <p className="text-xs text-slate-300">No organizations yet.</p>
         ) : (
           rows.map((row) => (

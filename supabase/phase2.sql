@@ -583,6 +583,16 @@ begin
       where pm.user_id = auth.uid()
         and pm.access_role in ('company_admin', 'manager')
     )
+    or exists (
+      select 1
+      from public.companies c
+      where c.owner_id = auth.uid()
+    )
+    or exists (
+      select 1
+      from public.projects p
+      where p.owner_id = auth.uid()
+    )
   ) then
     return;
   end if;
@@ -614,6 +624,22 @@ begin
          and target_pm.user_id = u.id
         where my_pm.user_id = auth.uid()
           and my_pm.access_role in ('company_admin', 'manager')
+      )
+      or exists (
+        select 1
+        from public.companies my_c
+        join public.company_members target_cm
+          on target_cm.company_id = my_c.id
+         and target_cm.user_id = u.id
+        where my_c.owner_id = auth.uid()
+      )
+      or exists (
+        select 1
+        from public.projects my_p
+        join public.project_members target_pm
+          on target_pm.project_id = my_p.id
+         and target_pm.user_id = u.id
+        where my_p.owner_id = auth.uid()
       )
   )
   select
@@ -867,6 +893,7 @@ using (
 create table if not exists public.crm_organizations (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  project_id uuid null,
   name text not null,
   org_type text not null default 'utility',
   notes text null,
@@ -874,8 +901,19 @@ create table if not exists public.crm_organizations (
   updated_at timestamptz not null default now()
 );
 
+alter table public.crm_organizations
+  add column if not exists project_id uuid null;
+
+alter table public.crm_organizations
+  drop constraint if exists crm_organizations_project_id_fkey;
+
+alter table public.crm_organizations
+  add constraint crm_organizations_project_id_fkey
+  foreign key (project_id) references public.projects(id) on delete set null;
+
 create index if not exists crm_org_owner_idx on public.crm_organizations (owner_id);
 create index if not exists crm_org_name_idx on public.crm_organizations (owner_id, name);
+create index if not exists crm_org_project_idx on public.crm_organizations (owner_id, project_id);
 
 -- Now that orgs exist, add foreign key from projects.
 alter table public.projects
@@ -1003,6 +1041,7 @@ create policy "Users can delete own crm notes" on public.crm_notes for delete us
 create table if not exists public.funding_programs (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  project_id uuid null,
   name text not null,
   agency text null,
   eligibility text null,
@@ -1014,8 +1053,19 @@ create table if not exists public.funding_programs (
   constraint funding_programs_url_check check (url is null or url ~* '^https?://')
 );
 
+alter table public.funding_programs
+  add column if not exists project_id uuid null;
+
+alter table public.funding_programs
+  drop constraint if exists funding_programs_project_id_fkey;
+
+alter table public.funding_programs
+  add constraint funding_programs_project_id_fkey
+  foreign key (project_id) references public.projects(id) on delete set null;
+
 create index if not exists funding_programs_owner_idx on public.funding_programs (owner_id);
 create index if not exists funding_programs_deadline_idx on public.funding_programs (owner_id, deadline);
+create index if not exists funding_programs_project_idx on public.funding_programs (owner_id, project_id);
 
 create table if not exists public.funding_links (
   id uuid primary key default gen_random_uuid(),

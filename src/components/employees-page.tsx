@@ -56,36 +56,47 @@ export function EmployeesPage() {
     } = await supabase.auth.getUser();
 
     if (!user) return;
+    try {
+      const [profileResult, companyRoleResult, projectRoleResult, ownedCompanyResult, ownedProjectResult, directoryRows, companyRows, projectRows] =
+        await Promise.all([
+          supabase.from("user_profiles").select("role").eq("id", user.id).maybeSingle(),
+          supabase
+            .from("company_members")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", user.id)
+            .in("member_role", ["company_admin", "manager"]),
+          supabase
+            .from("project_members")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", user.id)
+            .in("access_role", ["company_admin", "manager"]),
+          supabase.from("companies").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
+          supabase.from("projects").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
+          fetchEmployeeDirectory(supabase),
+          fetchCompanies(supabase),
+          fetchProjects(supabase),
+        ]);
 
-    const [profileResult, companyRoleResult, projectRoleResult, directoryRows, companyRows, projectRows] = await Promise.all([
-      supabase.from("user_profiles").select("role").eq("id", user.id).maybeSingle(),
-      supabase
-        .from("company_members")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .in("member_role", ["company_admin", "manager"]),
-      supabase
-        .from("project_members")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .in("access_role", ["company_admin", "manager"]),
-      fetchEmployeeDirectory(supabase),
-      fetchCompanies(supabase),
-      fetchProjects(supabase),
-    ]);
+      const nextRole = profileResult.data?.role ?? "employee";
+      const hasPlatformScope = nextRole === "platform_manager" || nextRole === "admin";
+      const hasManagerScope =
+        (companyRoleResult.count ?? 0) > 0 ||
+        (projectRoleResult.count ?? 0) > 0 ||
+        (ownedCompanyResult.count ?? 0) > 0 ||
+        (ownedProjectResult.count ?? 0) > 0;
 
-    const nextRole = profileResult.data?.role ?? "employee";
-    const hasPlatformScope = nextRole === "platform_manager" || nextRole === "admin";
-    const hasManagerScope = (companyRoleResult.count ?? 0) > 0 || (projectRoleResult.count ?? 0) > 0;
+      setCurrentRole(nextRole);
+      setCanManageEmployees(hasPlatformScope || hasManagerScope);
+      setDirectory(directoryRows);
+      setCompanies(companyRows);
+      setProjects(projectRows);
 
-    setCurrentRole(nextRole);
-    setCanManageEmployees(hasPlatformScope || hasManagerScope);
-    setDirectory(directoryRows);
-    setCompanies(companyRows);
-    setProjects(projectRows);
-
-    if (!companyId && companyRows.length > 0) setCompanyId(companyRows[0].id);
-    if (!projectId && projectRows.length > 0) setProjectId(projectRows[0].id);
+      if (!companyId && companyRows.length > 0) setCompanyId(companyRows[0].id);
+      if (!projectId && projectRows.length > 0) setProjectId(projectRows[0].id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      setStatusMessage(`Could not load employee directory: ${message}`);
+    }
   }
 
   useEffect(() => {
