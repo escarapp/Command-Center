@@ -90,6 +90,13 @@ create table if not exists public.user_profiles (
   constraint user_profiles_role_check check (role in ('employee', 'platform_manager', 'user', 'admin'))
 );
 
+alter table public.user_profiles
+  drop constraint if exists user_profiles_role_check;
+
+alter table public.user_profiles
+  add constraint user_profiles_role_check
+  check (role in ('employee', 'platform_manager', 'user', 'admin'));
+
 create index if not exists user_profiles_role_idx on public.user_profiles (role);
 
 drop trigger if exists set_user_profiles_updated_at on public.user_profiles;
