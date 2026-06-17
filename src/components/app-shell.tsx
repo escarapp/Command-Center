@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ChevronDown, LogOut, Menu, X } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { clearActiveProjectSelection } from "@/lib/project-session";
+import { clearActiveProjectSelection, readActiveProjectSelection } from "@/lib/project-session";
 
 type AppShellProps = {
   userEmail: string;
@@ -22,6 +22,7 @@ const NAV_MORE_ITEMS: Array<{ href: string; label: string }> = [
   { href: "/crm", label: "CRM" },
   { href: "/funding", label: "Funding" },
   { href: "/documents", label: "Documents" },
+  { href: "/employees", label: "Employees" },
   { href: "/ai", label: "AI" },
 ];
 
@@ -88,29 +89,72 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
   const pathname = usePathname();
   const supabase = useMemo(() => createClient(), []);
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [userRole, setUserRole] = useState<string>("employee");
+  const [canManageEmployees, setCanManageEmployees] = useState(false);
+  const [fallbackActiveProjectName, setFallbackActiveProjectName] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const displayActiveProjectName = activeProjectName ?? fallbackActiveProjectName ?? "No active project";
+  const moreItems = useMemo(
+    () => NAV_MORE_ITEMS.filter((item) => (item.href === "/employees" ? canManageEmployees : true)),
+    [canManageEmployees],
+  );
   const planningActive = PLANNING_ITEMS.some((item) => item.href === pathname);
   const dashboardsActive = DASHBOARD_ITEMS.some((item) => item.href === pathname);
   const engineeringActive = ENGINEERING_ITEMS.some((item) => item.href === pathname);
   const marketActive = MARKET_ITEMS.some((item) => item.href === pathname);
   const investorPortalActive = INVESTOR_PORTAL_ITEMS.some((item) => item.href === pathname);
   const digitalTwinActive = DIGITAL_TWIN_ITEMS.some((item) => item.href === pathname);
-  const moreActive = NAV_MORE_ITEMS.some((item) => item.href === pathname);
+  const moreActive = moreItems.some((item) => item.href === pathname);
 
   useEffect(() => {
     setMobileNavOpen(false);
   }, [pathname]);
 
   useEffect(() => {
-    supabase
-      .from("user_profiles")
-      .select("role")
-      .single()
-      .then(({ data }) => {
-        setIsAdmin(data?.role === "admin");
-      });
+    let isMounted = true;
+
+    async function loadPermissions() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!isMounted || !user) return;
+
+      const [profileResult, companyManagerResult, projectManagerResult] = await Promise.all([
+        supabase.from("user_profiles").select("role").eq("id", user.id).maybeSingle(),
+        supabase
+          .from("company_members")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .in("member_role", ["company_admin", "manager"]),
+        supabase
+          .from("project_members")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .in("access_role", ["company_admin", "manager"]),
+      ]);
+
+      const role = profileResult.data?.role ?? "employee";
+      const hasManagerScope = (companyManagerResult.count ?? 0) > 0 || (projectManagerResult.count ?? 0) > 0;
+      const hasPlatformScope = role === "platform_manager" || role === "admin";
+
+      if (!isMounted) return;
+      setUserRole(role);
+      setCanManageEmployees(hasPlatformScope || hasManagerScope);
+    }
+
+    void loadPermissions();
+
+    return () => {
+      isMounted = false;
+    };
   }, [supabase]);
+
+  useEffect(() => {
+    if (activeProjectName) return;
+    const selected = readActiveProjectSelection();
+    setFallbackActiveProjectName(selected?.name ?? null);
+  }, [activeProjectName]);
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -138,7 +182,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
             Projects
           </Link>
           <span className="max-w-[220px] truncate rounded-full border border-white/10 bg-slate-900/70 px-3 py-1 text-xs text-slate-200">
-            {activeProjectName ?? "No active project"}
+            {displayActiveProjectName}
           </span>
         </div>
 
@@ -176,7 +220,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
               </summary>
 
               <div className="absolute right-0 top-full z-30 mt-2 grid min-w-[190px] gap-1 rounded-lg border border-slate-700 bg-slate-950/95 p-2 shadow-lg backdrop-blur">
-                {NAV_MORE_ITEMS.map((item) => {
+                {moreItems.map((item) => {
                   const active = pathname === item.href;
                   return (
                     <Link
@@ -426,9 +470,9 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
           </button>
 
           <span className="hidden max-w-[280px] truncate text-xs text-slate-300 sm:block">{userEmail}</span>
-          {isAdmin && (
+          {(userRole === "platform_manager" || userRole === "admin") && (
             <span className="hidden rounded-full bg-cyan-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-950 sm:inline">
-              Admin
+              Platform Manager
             </span>
           )}
           <button
@@ -464,7 +508,7 @@ export function AppShell({ userEmail, activeProjectName, children }: AppShellPro
                 </Link>
               );
             })}
-            {NAV_MORE_ITEMS.map((item) => {
+            {moreItems.map((item) => {
               const active = pathname === item.href;
               return (
                 <Link

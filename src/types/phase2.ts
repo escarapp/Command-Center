@@ -70,3 +70,27 @@ export type DocumentRow = {
   size_bytes: number | null;
   created_at: string;
 };
+
+export type PlatformRole = "employee" | "platform_manager" | "user" | "admin";
+export type CompanyMemberRole = "employee" | "manager" | "company_admin";
+export type ProjectAccessRole = "employee" | "manager" | "company_admin";
+
+export type EmployeeCompanyMembership = {
+  company_id: string;
+  company_name: string;
+  member_role: CompanyMemberRole;
+};
+
+export type EmployeeProjectMembership = {
+  project_id: string;
+  project_name: string;
+  access_role: ProjectAccessRole;
+};
+
+export type EmployeeDirectoryRow = {
+  user_id: string;
+  email: string;
+  platform_role: PlatformRole;
+  company_memberships: EmployeeCompanyMembership[];
+  project_memberships: EmployeeProjectMembership[];
+};

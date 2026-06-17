@@ -26,6 +26,13 @@ create table if not exists public.company_members (
 create index if not exists company_members_company_idx on public.company_members (company_id);
 create index if not exists company_members_user_idx on public.company_members (user_id);
 
+alter table public.company_members
+  drop constraint if exists company_members_member_role_check;
+
+alter table public.company_members
+  add constraint company_members_member_role_check
+  check (member_role in ('employee', 'manager', 'company_admin'));
+
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
@@ -67,6 +74,40 @@ create table if not exists public.project_members (
 
 create index if not exists project_members_project_idx on public.project_members (project_id);
 create index if not exists project_members_user_idx on public.project_members (user_id);
+
+alter table public.project_members
+  drop constraint if exists project_members_access_role_check;
+
+alter table public.project_members
+  add constraint project_members_access_role_check
+  check (access_role in ('employee', 'manager', 'company_admin'));
+
+create table if not exists public.user_profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  role text not null default 'employee',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint user_profiles_role_check check (role in ('employee', 'platform_manager', 'user', 'admin'))
+);
+
+create index if not exists user_profiles_role_idx on public.user_profiles (role);
+
+drop trigger if exists set_user_profiles_updated_at on public.user_profiles;
+create trigger set_user_profiles_updated_at
+before update on public.user_profiles
+for each row
+execute function public.set_current_timestamp_updated_at();
+
+alter table public.user_profiles enable row level security;
+
+insert into public.user_profiles (id, role)
+select id, 'platform_manager'
+from auth.users
+where lower(email) = 'alescobedo2009@gmail.com'
+on conflict (id)
+do update set
+  role = 'platform_manager',
+  updated_at = now();
 
 create or replace function public.is_company_member(p_company_id uuid)
 returns boolean
@@ -127,6 +168,488 @@ as $$
       and p.owner_id = auth.uid()
   );
 $$;
+
+create or replace function public.is_platform_manager()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.user_profiles up
+    where up.id = auth.uid()
+      and up.role in ('platform_manager', 'admin')
+  );
+$$;
+
+create or replace function public.user_management_rank(p_role text)
+returns integer
+language sql
+immutable
+set search_path = public
+as $$
+  select case
+    when p_role in ('company_admin', 'admin', 'platform_manager') then 3
+    when p_role = 'manager' then 2
+    when p_role in ('employee', 'user') then 1
+    else 0
+  end;
+$$;
+
+create or replace function public.can_manage_company(p_company_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select (
+    public.is_platform_manager()
+    or public.is_company_owner(p_company_id)
+    or exists (
+      select 1
+      from public.company_members cm
+      where cm.company_id = p_company_id
+        and cm.user_id = auth.uid()
+        and cm.member_role in ('company_admin', 'manager')
+    )
+  );
+$$;
+
+create or replace function public.can_manage_project(p_project_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select (
+    public.is_platform_manager()
+    or public.is_project_owner(p_project_id)
+    or exists (
+      select 1
+      from public.project_members pm
+      where pm.project_id = p_project_id
+        and pm.user_id = auth.uid()
+        and pm.access_role in ('company_admin', 'manager')
+    )
+    or exists (
+      select 1
+      from public.projects p
+      where p.id = p_project_id
+        and p.company_id is not null
+        and public.can_manage_company(p.company_id)
+    )
+  );
+$$;
+
+create or replace function public.upsert_platform_role_by_email(p_email text, p_role text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_target_user_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not public.is_platform_manager() then
+    raise exception 'Only platform managers can assign platform roles';
+  end if;
+
+  if p_role not in ('employee', 'platform_manager', 'user', 'admin') then
+    raise exception 'Invalid platform role';
+  end if;
+
+  select u.id
+    into v_target_user_id
+  from auth.users u
+  where lower(u.email) = lower(trim(p_email))
+  limit 1;
+
+  if v_target_user_id is null then
+    raise exception 'No user found with email %', p_email;
+  end if;
+
+  insert into public.user_profiles (id, role)
+  values (v_target_user_id, p_role)
+  on conflict (id)
+  do update set
+    role = excluded.role,
+    updated_at = now();
+
+  return v_target_user_id;
+end;
+$$;
+
+create or replace function public.assign_company_member_by_email(
+  p_company_id uuid,
+  p_email text,
+  p_member_role text default 'employee'
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_target_user_id uuid;
+  v_actor_role text;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if p_member_role not in ('employee', 'manager', 'company_admin') then
+    raise exception 'Invalid company role';
+  end if;
+
+  select u.id
+    into v_target_user_id
+  from auth.users u
+  where lower(u.email) = lower(trim(p_email))
+  limit 1;
+
+  if v_target_user_id is null then
+    raise exception 'No user found with email %', p_email;
+  end if;
+
+  if public.is_platform_manager() then
+    v_actor_role := 'platform_manager';
+  elsif public.is_company_owner(p_company_id) then
+    v_actor_role := 'company_admin';
+  else
+    select cm.member_role
+      into v_actor_role
+    from public.company_members cm
+    where cm.company_id = p_company_id
+      and cm.user_id = auth.uid();
+  end if;
+
+  if v_actor_role is null then
+    raise exception 'No permission to manage this company';
+  end if;
+
+  if not public.is_platform_manager()
+     and public.user_management_rank(p_member_role) > public.user_management_rank(v_actor_role) then
+    raise exception 'Cannot assign role above your own permission level';
+  end if;
+
+  if not public.is_platform_manager() then
+    if v_actor_role = 'manager' and p_member_role <> 'employee' then
+      raise exception 'Managers can only assign employee role';
+    end if;
+
+    if v_actor_role = 'company_admin' and p_member_role = 'company_admin' then
+      raise exception 'Company admins can only assign manager or employee roles';
+    end if;
+  end if;
+
+  insert into public.company_members (company_id, user_id, member_role)
+  values (p_company_id, v_target_user_id, p_member_role)
+  on conflict (company_id, user_id)
+  do update set
+    member_role = excluded.member_role,
+    created_at = public.company_members.created_at;
+
+  return v_target_user_id;
+end;
+$$;
+
+create or replace function public.assign_project_member_by_email(
+  p_project_id uuid,
+  p_email text,
+  p_access_role text default 'employee'
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_target_user_id uuid;
+  v_actor_role text;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if p_access_role not in ('employee', 'manager', 'company_admin') then
+    raise exception 'Invalid project role';
+  end if;
+
+  select u.id
+    into v_target_user_id
+  from auth.users u
+  where lower(u.email) = lower(trim(p_email))
+  limit 1;
+
+  if v_target_user_id is null then
+    raise exception 'No user found with email %', p_email;
+  end if;
+
+  if public.is_platform_manager() then
+    v_actor_role := 'platform_manager';
+  elsif public.is_project_owner(p_project_id) then
+    v_actor_role := 'company_admin';
+  else
+    select pm.access_role
+      into v_actor_role
+    from public.project_members pm
+    where pm.project_id = p_project_id
+      and pm.user_id = auth.uid();
+  end if;
+
+  if v_actor_role is null then
+    raise exception 'No permission to manage this project';
+  end if;
+
+  if not public.is_platform_manager()
+     and public.user_management_rank(p_access_role) > public.user_management_rank(v_actor_role) then
+    raise exception 'Cannot assign role above your own permission level';
+  end if;
+
+  if not public.is_platform_manager() then
+    if v_actor_role = 'manager' and p_access_role <> 'employee' then
+      raise exception 'Managers can only assign employee role';
+    end if;
+
+    if v_actor_role = 'company_admin' and p_access_role = 'company_admin' then
+      raise exception 'Company admins can only assign manager or employee roles';
+    end if;
+  end if;
+
+  insert into public.project_members (project_id, user_id, access_role)
+  values (p_project_id, v_target_user_id, p_access_role)
+  on conflict (project_id, user_id)
+  do update set
+    access_role = excluded.access_role,
+    created_at = public.project_members.created_at;
+
+  return v_target_user_id;
+end;
+$$;
+
+create or replace function public.remove_company_member_assignment(p_company_id uuid, p_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor_role text;
+  v_target_role text;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if public.is_platform_manager() then
+    delete from public.company_members
+    where company_id = p_company_id
+      and user_id = p_user_id;
+    return;
+  end if;
+
+  if public.is_company_owner(p_company_id) then
+    v_actor_role := 'company_admin';
+  else
+    select cm.member_role
+      into v_actor_role
+    from public.company_members cm
+    where cm.company_id = p_company_id
+      and cm.user_id = auth.uid();
+  end if;
+
+  if v_actor_role is null then
+    raise exception 'No permission to remove company membership';
+  end if;
+
+  select cm.member_role
+    into v_target_role
+  from public.company_members cm
+  where cm.company_id = p_company_id
+    and cm.user_id = p_user_id;
+
+  if v_target_role is null then
+    return;
+  end if;
+
+  if public.user_management_rank(v_target_role) >= public.user_management_rank(v_actor_role) then
+    raise exception 'Cannot remove a user with equal or higher role';
+  end if;
+
+  delete from public.company_members
+  where company_id = p_company_id
+    and user_id = p_user_id;
+end;
+$$;
+
+create or replace function public.remove_project_member_assignment(p_project_id uuid, p_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor_role text;
+  v_target_role text;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if public.is_platform_manager() then
+    delete from public.project_members
+    where project_id = p_project_id
+      and user_id = p_user_id;
+    return;
+  end if;
+
+  if public.is_project_owner(p_project_id) then
+    v_actor_role := 'company_admin';
+  else
+    select pm.access_role
+      into v_actor_role
+    from public.project_members pm
+    where pm.project_id = p_project_id
+      and pm.user_id = auth.uid();
+  end if;
+
+  if v_actor_role is null then
+    raise exception 'No permission to remove project membership';
+  end if;
+
+  select pm.access_role
+    into v_target_role
+  from public.project_members pm
+  where pm.project_id = p_project_id
+    and pm.user_id = p_user_id;
+
+  if v_target_role is null then
+    return;
+  end if;
+
+  if public.user_management_rank(v_target_role) >= public.user_management_rank(v_actor_role) then
+    raise exception 'Cannot remove a user with equal or higher role';
+  end if;
+
+  delete from public.project_members
+  where project_id = p_project_id
+    and user_id = p_user_id;
+end;
+$$;
+
+create or replace function public.list_accessible_employees()
+returns table (
+  user_id uuid,
+  email text,
+  platform_role text,
+  company_memberships jsonb,
+  project_memberships jsonb
+)
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not (
+    public.is_platform_manager()
+    or exists (
+      select 1
+      from public.company_members cm
+      where cm.user_id = auth.uid()
+        and cm.member_role in ('company_admin', 'manager')
+    )
+    or exists (
+      select 1
+      from public.project_members pm
+      where pm.user_id = auth.uid()
+        and pm.access_role in ('company_admin', 'manager')
+    )
+  ) then
+    return;
+  end if;
+
+  return query
+  with accessible_users as (
+    select distinct
+      u.id as u_id,
+      u.email as u_email,
+      coalesce(up.role, 'employee') as u_platform_role
+    from auth.users u
+    left join public.user_profiles up on up.id = u.id
+    where public.is_platform_manager()
+      or u.id = auth.uid()
+      or exists (
+        select 1
+        from public.company_members my_cm
+        join public.company_members target_cm
+          on target_cm.company_id = my_cm.company_id
+         and target_cm.user_id = u.id
+        where my_cm.user_id = auth.uid()
+          and my_cm.member_role in ('company_admin', 'manager')
+      )
+      or exists (
+        select 1
+        from public.project_members my_pm
+        join public.project_members target_pm
+          on target_pm.project_id = my_pm.project_id
+         and target_pm.user_id = u.id
+        where my_pm.user_id = auth.uid()
+          and my_pm.access_role in ('company_admin', 'manager')
+      )
+  )
+  select
+    au.u_id as user_id,
+    au.u_email as email,
+    au.u_platform_role as platform_role,
+    coalesce((
+      select jsonb_agg(
+        jsonb_build_object(
+          'company_id', cm.company_id,
+          'company_name', c.name,
+          'member_role', cm.member_role
+        )
+        order by c.name
+      )
+      from public.company_members cm
+      join public.companies c on c.id = cm.company_id
+      where cm.user_id = au.u_id
+    ), '[]'::jsonb) as company_memberships,
+    coalesce((
+      select jsonb_agg(
+        jsonb_build_object(
+          'project_id', pm.project_id,
+          'project_name', p.name,
+          'access_role', pm.access_role
+        )
+        order by p.name
+      )
+      from public.project_members pm
+      join public.projects p on p.id = pm.project_id
+      where pm.user_id = au.u_id
+    ), '[]'::jsonb) as project_memberships
+  from accessible_users au
+  order by lower(au.u_email);
+end;
+$$;
+
+grant execute on function public.upsert_platform_role_by_email(text, text) to authenticated;
+grant execute on function public.assign_company_member_by_email(uuid, text, text) to authenticated;
+grant execute on function public.assign_project_member_by_email(uuid, text, text) to authenticated;
+grant execute on function public.remove_company_member_assignment(uuid, uuid) to authenticated;
+grant execute on function public.remove_project_member_assignment(uuid, uuid) to authenticated;
+grant execute on function public.list_accessible_employees() to authenticated;
 
 -- Add fields to GIS features for pipeline builder + project linking.
 alter table public.gis_features add column if not exists project_id uuid null;
@@ -229,6 +752,7 @@ for select
 using (
   user_id = auth.uid()
   or public.is_company_owner(company_id)
+  or public.can_manage_company(company_id)
 );
 
 drop policy if exists "Company owners can manage memberships" on public.company_members;
@@ -237,9 +761,11 @@ on public.company_members
 for all
 using (
   public.is_company_owner(company_id)
+  or public.can_manage_company(company_id)
 )
 with check (
   public.is_company_owner(company_id)
+  or public.can_manage_company(company_id)
 );
 
 drop policy if exists "Users can select project memberships" on public.project_members;
@@ -249,6 +775,7 @@ for select
 using (
   user_id = auth.uid()
   or public.is_project_owner(project_id)
+  or public.can_manage_project(project_id)
 );
 
 drop policy if exists "Project owners can manage memberships" on public.project_members;
@@ -257,10 +784,28 @@ on public.project_members
 for all
 using (
   public.is_project_owner(project_id)
+  or public.can_manage_project(project_id)
 )
 with check (
   public.is_project_owner(project_id)
+  or public.can_manage_project(project_id)
 );
+
+drop policy if exists "Users can read own profile" on public.user_profiles;
+create policy "Users can read own profile"
+on public.user_profiles
+for select
+using (
+  id = auth.uid()
+  or public.is_platform_manager()
+);
+
+drop policy if exists "Platform managers can manage profiles" on public.user_profiles;
+create policy "Platform managers can manage profiles"
+on public.user_profiles
+for all
+using (public.is_platform_manager())
+with check (public.is_platform_manager());
 
 drop policy if exists "Users can select accessible projects" on public.projects;
 create policy "Users can select accessible projects"
